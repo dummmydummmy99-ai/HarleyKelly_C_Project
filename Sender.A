@@ -1,0 +1,122 @@
+/****************************************************************************
+* Title                 :   Sensor LIDAR Process (Process A)
+* Filename              :   sensor_lidar.c
+* Author                :   Harley Kelly
+* Origin Date           :   14/11/2025
+* Version               :   1.0.3
+* Compiler              :   Microchip C30 v3.30c
+* Target                :   Cross-Platform
+* Notes                 :   Generates LIDAR data and sends it to Process B
+*****************************************************************************/
+/*************** INTERFACE CHANGE LIST **************************************
+*
+*    Date        Software Version    Initials   Description 
+*  28/11/2025       1.0.3             HK       Added shared log mutex
+*  21/11/2025       1.0.2             HK       Added ACK handshake cleanup
+*  14/11/2025       1.0.1             HK       Initial LIDAR-to-B interface
+*
+*****************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#define sleep_ms(ms) Sleep(ms)
+#else
+#include <unistd.h>
+#define sleep_ms(ms) usleep(ms * 1000)
+#endif
+
+#define DATA_FILE       "lidar_data.txt"
+#define READY_FLAG      "data_ready.flag"
+#define ACK_FLAG        "ack.flag"
+#define CMD_READY_FLAG  "cmd_ready.flag"
+#define CMD_ACK_FLAG    "cmd_ack.flag"
+
+#define SYSTEM_LOG      "system_log.txt"
+#define LOG_LOCK        "log.lock"
+
+#define POLL_INTERVAL_MS 100
+
+static int file_exists(const char *filename)
+{
+    FILE *f = fopen(filename, "r");
+    if (f) { fclose(f); return 1; }
+    return 0;
+}
+
+static void create_file(const char *filename)
+{
+    FILE *f = fopen(filename, "w");
+    if (f) fclose(f);
+}
+
+static void acquire_log_lock(void)
+{
+    while (file_exists(LOG_LOCK))
+        sleep_ms(10);
+    create_file(LOG_LOCK);
+}
+
+static void release_log_lock(void)
+{
+    remove(LOG_LOCK);
+}
+
+static void write_log(const char *message)
+{
+    acquire_log_lock();
+    FILE *log = fopen(SYSTEM_LOG, "a");
+    if (log) {
+        fprintf(log, "[A] %s\n", message);
+        fclose(log);
+    }
+    release_log_lock();
+}
+
+int main()
+{
+    int data_counter = 0;
+    srand(time(NULL));
+
+    remove(READY_FLAG);
+    remove(ACK_FLAG);
+    remove(CMD_READY_FLAG);
+    remove(CMD_ACK_FLAG);
+
+    write_log("Process A started.");
+
+    while (1)
+    {
+        data_counter++;
+
+        char logmsg[128];
+        sprintf(logmsg, "Writing LIDAR packet %d", data_counter);
+        write_log(logmsg);
+
+        FILE *fp = fopen(DATA_FILE, "w");
+        if (!fp) return 1;
+
+        fprintf(fp, "packet_id: %d\n", data_counter);
+        fprintf(fp, "range_0: %d\n", rand() % 10 + 5);
+        fprintf(fp, "range_1: %d\n", rand() % 10 + 5);
+        fprintf(fp, "range_2: %d\n", rand() % 10 + 5);
+        fclose(fp);
+
+        create_file(READY_FLAG);
+
+        while (!file_exists(ACK_FLAG))
+            sleep_ms(POLL_INTERVAL_MS);
+
+        remove(ACK_FLAG);
+
+        write_log("ACK received from Process B.");
+
+        sleep_ms(1000);
+    }
+
+    return 0;
+}
+
