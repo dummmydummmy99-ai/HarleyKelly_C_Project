@@ -3,10 +3,10 @@
 * Filename              :   nav_planner.c
 * Author                :   Harley Kelly
 * Origin Date           :   14/11/2025
-* Version               :   1.0.4
+* Version               :   1.0.3
 * Compiler              :   Microchip C30 v3.30c
 * Target                :   Cross-Platform
-* Notes                 :   Middle layer: A ↔ B ↔ C coordination
+* Notes                 :   Reads LIDAR data from Process A, sends motor commands to Process C
 *****************************************************************************/
 
 #include <stdio.h>
@@ -17,104 +17,82 @@
 #define sleep_ms(ms) Sleep(ms)
 #else
 #include <unistd.h>
-#define sleep_ms(ms) usleep(ms * 1000)
+#define sleep_ms(ms) usleep(ms*1000)
 #endif
 
-#define DATA_FILE       "lidar_data.txt"
-#define READY_FLAG      "data_ready.flag"
-#define ACK_FLAG        "ack.flag"
+#define DATA_FILE "lidar_data.txt"
+#define READY_FLAG "data_ready.flag"
+#define ACK_FLAG "ack_from_B.flag"
+#define CMD_FILE "motor_cmd.txt"
+#define CMD_READY "cmd_ready.flag"
+#define CMD_ACK "cmd_ack.flag"
+#define SYSTEM_LOG "system_log.txt"
+#define LOG_LOCK "log.lock"
 
-#define CMD_FILE        "motor_cmd.txt"
-#define CMD_READY_FLAG  "cmd_ready.flag"
-#define CMD_ACK_FLAG    "cmd_ack.flag"
-
-#define SYSTEM_LOG      "system_log.txt"
-#define LOG_LOCK        "log.lock"
-
-#define POLL_INTERVAL_MS 100
-
-static int file_exists(const char *filename)
-{
-    FILE *f = fopen(filename, "r");
-    if (f) { fclose(f); return 1; }
-    return 0;
+int file_exists(const char *filename) {
+    FILE *f = fopen(filename,"r");
+    if(f){ fclose(f); return 1; } return 0;
 }
 
-static void create_file(const char *filename)
-{
-    FILE *f = fopen(filename, "w");
-    if (f) fclose(f);
+void create_file(const char *filename) {
+    FILE *f = fopen(filename,"w");
+    if(f) fclose(f);
+    else fprintf(stderr,"Error creating file %s\n",filename);
 }
 
-static void acquire_log_lock(void)
-{
-    while (file_exists(LOG_LOCK))
-        sleep_ms(10);
-    create_file(LOG_LOCK);
-}
-
-static void release_log_lock(void)
-{
-    remove(LOG_LOCK);
-}
-
-static void write_log(const char *msg)
-{
+//--- Mutex log functions ---
+static void acquire_log_lock(void) { while(file_exists(LOG_LOCK)) sleep_ms(10); create_file(LOG_LOCK); }
+static void release_log_lock(void) { remove(LOG_LOCK); }
+static void write_log(const char *msg) {
     acquire_log_lock();
-    FILE *log = fopen(SYSTEM_LOG, "a");
-    if (log) {
-        fprintf(log, "[Nav_Planner] %s\n", msg);
-        fclose(log);
-    }
+    FILE *log = fopen(SYSTEM_LOG,"a");
+    if(log){ fprintf(log,"[Nav_Planner] %s\n",msg); fclose(log);}
     release_log_lock();
 }
 
-int main()
-{
-    char buffer[256];
+int main() {
+    char line[256];
+    printf("Process B (Nav_Planner) started.\n");
     write_log("Process started.");
 
-    while (1)
-    {
-        // Wait for new LIDAR data
-        while (!file_exists(READY_FLAG))
-            sleep_ms(POLL_INTERVAL_MS);
+    remove(ACK_FLAG);
+    remove(CMD_READY);
+    remove(CMD_ACK);
 
+    while(1) {
+        //--- Wait for Process A ---
+        while(!file_exists(READY_FLAG)) sleep_ms(100);
         remove(READY_FLAG);
 
-        FILE *fp = fopen(DATA_FILE, "r");
-        if (!fp) { write_log("ERROR: Cannot open LIDAR file."); continue; }
+        FILE *f = fopen(DATA_FILE,"r");
+        if(!f){ sleep_ms(1000); continue; }
 
-        int packet_id = 0;
-        fgets(buffer, sizeof(buffer), fp); // read first line
-        sscanf(buffer, "packet_id: %d", &packet_id); // extract packet ID
+        int packet_id=0;
+        while(fgets(line,sizeof(line),f)){
+            if(sscanf(line,"packet_id: %d",&packet_id)==1) break;
+        }
+        fclose(f);
 
-        fclose(fp);
+        //--- Send ACK to A ---
+        create_file(ACK_FLAG);
 
-        create_file(ACK_FLAG); // send ACK to A
-
-        // Generate motor command for C
-        FILE *cmd = fopen(CMD_FILE, "w");
-        if (cmd) {
-            fprintf(cmd, "command_id: %d\n", packet_id);
-            fprintf(cmd, "drive_speed: %.2f\n", 1.0);
-            fprintf(cmd, "turn_angle: %.2f\n", 0.4);
+        //--- Create motor command ---
+        FILE *cmd = fopen(CMD_FILE,"w");
+        if(cmd){
+            fprintf(cmd,"command_id: %d\n", packet_id);
             fclose(cmd);
         }
-        create_file(CMD_READY_FLAG);
+        create_file(CMD_READY);
 
         printf("[Nav_Planner] Received packet %d, sent motor command.\n", packet_id);
         write_log("Processed packet and sent motor command.");
 
-        // Wait for ACK from C
-        while (!file_exists(CMD_ACK_FLAG))
-            sleep_ms(POLL_INTERVAL_MS);
-
-        remove(CMD_ACK_FLAG);
+        //--- Wait for Motor Ctrl ACK ---
+        while(!file_exists(CMD_ACK)) sleep_ms(100);
+        remove(CMD_ACK);
         write_log("Received ACK from Process C.");
 
         sleep_ms(200);
     }
-
     return 0;
 }
