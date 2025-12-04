@@ -3,18 +3,10 @@
 * Filename              :   sensor_lidar.c
 * Author                :   Harley Kelly
 * Origin Date           :   14/11/2025
-* Version               :   1.0.3
+* Version               :   1.0.4
 * Compiler              :   Microchip C30 v3.30c
 * Target                :   Cross-Platform
 * Notes                 :   Generates LIDAR data and sends it to Process B
-*****************************************************************************/
-/*************** INTERFACE CHANGE LIST **************************************
-*
-*    Date        Software Version    Initials   Description 
-*  28/11/2025       1.0.3             HK       Added shared log mutex
-*  21/11/2025       1.0.2             HK       Added ACK handshake cleanup
-*  14/11/2025       1.0.1             HK       Initial LIDAR-to-B interface
-*
 *****************************************************************************/
 
 #include <stdio.h>
@@ -29,22 +21,15 @@
 #define sleep_ms(ms) usleep(ms * 1000)
 #endif
 
-// --- File names for communication ---
-#define DATA_FILE       "lidar_data.txt"   // LIDAR data output
-#define READY_FLAG      "data_ready.flag"  // signals new data ready for B
-#define ACK_FLAG        "ack.flag"         // acknowledgment from B
+#define DATA_FILE       "lidar_data.txt"
+#define READY_FLAG      "data_ready.flag"
+#define ACK_FLAG        "ack.flag"
 
-// --- Shared log files ---
 #define SYSTEM_LOG      "system_log.txt"
 #define LOG_LOCK        "log.lock"
 
-#define POLL_INTERVAL_MS 100  // polling interval for flags
+#define POLL_INTERVAL_MS 100
 
-// --------------------------
-// Helper functions
-// --------------------------
-
-// Check if a file exists
 static int file_exists(const char *filename)
 {
     FILE *f = fopen(filename, "r");
@@ -52,34 +37,30 @@ static int file_exists(const char *filename)
     return 0;
 }
 
-// Create an empty file (used for flags)
 static void create_file(const char *filename)
 {
     FILE *f = fopen(filename, "w");
     if (f) fclose(f);
 }
 
-// Acquire the log mutex
 static void acquire_log_lock(void)
 {
     while (file_exists(LOG_LOCK))
-        sleep_ms(10); // wait if lock exists
-    create_file(LOG_LOCK); // create lock
+        sleep_ms(10);
+    create_file(LOG_LOCK);
 }
 
-// Release the log mutex
 static void release_log_lock(void)
 {
     remove(LOG_LOCK);
 }
 
-// Write a message to the shared system log
 static void write_log(const char *message)
 {
     acquire_log_lock();
     FILE *log = fopen(SYSTEM_LOG, "a");
     if (log) {
-        fprintf(log, "[A] %s\n", message);
+        fprintf(log, "[Sensor_LIDAR] %s\n", message);
         fclose(log);
     }
     release_log_lock();
@@ -90,44 +71,39 @@ int main()
     int data_counter = 0;
     srand(time(NULL));
 
-    // Clean any old flags
     remove(READY_FLAG);
     remove(ACK_FLAG);
 
-    write_log("Process A started.");
+    write_log("Process started.");
 
     while (1)
     {
         data_counter++;
 
-        // --- Generate LIDAR data ---
-        char logmsg[128];
-        sprintf(logmsg, "Writing LIDAR packet %d", data_counter);
-        write_log(logmsg);
-
         FILE *fp = fopen(DATA_FILE, "w");
         if (!fp) return 1;
 
-        // Example LIDAR readings
+        // generate dummy LIDAR data
         fprintf(fp, "packet_id: %d\n", data_counter);
-        fprintf(fp, "range_0: %d\n", rand() % 10 + 5);
-        fprintf(fp, "range_1: %d\n", rand() % 10 + 5);
-        fprintf(fp, "range_2: %d\n", rand() % 10 + 5);
+        fprintf(fp, "range_0: %.2f\n", 5.0 + rand()%10);
+        fprintf(fp, "range_1: %.2f\n", 5.0 + rand()%10);
+        fprintf(fp, "range_2: %.2f\n", 5.0 + rand()%10);
         fclose(fp);
 
-        // Signal to Process B that data is ready
         create_file(READY_FLAG);
 
-        // --- Wait for ACK from Process B ---
+        printf("[Sensor_LIDAR] Data packet %d written successfully.\n", data_counter);
+        write_log("Data packet written successfully.");
+
+        // Wait for ACK from B
         while (!file_exists(ACK_FLAG))
             sleep_ms(POLL_INTERVAL_MS);
 
-        remove(ACK_FLAG);  // consume ACK
+        remove(ACK_FLAG); // consume ACK
         write_log("ACK received from Process B.");
 
-        sleep_ms(1000); // simulate sensor refresh rate
+        sleep_ms(1000);
     }
 
     return 0;
 }
-
