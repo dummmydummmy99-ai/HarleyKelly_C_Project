@@ -3,18 +3,10 @@
 * Filename              :   motor_ctrl.c
 * Author                :   Harley Kelly
 * Origin Date           :   14/11/2025
-* Version               :   1.0.3
+* Version               :   1.0.4
 * Compiler              :   Microchip C30 v3.30c
 * Target                :   Cross-Platform
 * Notes                 :   Executes motor commands from Process B
-*****************************************************************************/
-/*************** INTERFACE CHANGE LIST **************************************
-*
-*    Date        Software Version    Initials   Description 
-*  28/11/2025       1.0.3             HK       Added shared log mutex
-*  21/11/2025       1.0.2             HK       Implemented B → C → B command chain
-*  14/11/2025       1.0.1             HK       Initial motor controller stub
-*
 *****************************************************************************/
 
 #include <stdio.h>
@@ -28,20 +20,14 @@
 #define sleep_ms(ms) usleep(ms * 1000)
 #endif
 
-// --- File names for communication ---
-#define CMD_FILE        "motor_cmd.txt"     // command file from B
-#define CMD_READY_FLAG  "cmd_ready.flag"    // indicates new command from B
-#define CMD_ACK_FLAG    "cmd_ack.flag"      // acknowledgment to B
+#define CMD_FILE        "motor_cmd.txt"
+#define CMD_READY_FLAG  "cmd_ready.flag"
+#define CMD_ACK_FLAG    "cmd_ack.flag"
 
-// --- Shared log files ---
 #define SYSTEM_LOG      "system_log.txt"
 #define LOG_LOCK        "log.lock"
 
 #define POLL_INTERVAL_MS 100
-
-// --------------------------
-// Helper functions
-// --------------------------
 
 static int file_exists(const char *filename)
 {
@@ -73,7 +59,7 @@ static void write_log(const char *msg)
     acquire_log_lock();
     FILE *log = fopen(SYSTEM_LOG, "a");
     if (log) {
-        fprintf(log, "[C] %s\n", msg);
+        fprintf(log, "[Motor_Ctrl] %s\n", msg);
         fclose(log);
     }
     release_log_lock();
@@ -82,30 +68,32 @@ static void write_log(const char *msg)
 int main()
 {
     char buf[256];
-    write_log("Process C started.");
+    write_log("Process started.");
 
     while (1)
     {
-        // --- Wait for command from Process B ---
+        // Wait for command from B
         while (!file_exists(CMD_READY_FLAG))
             sleep_ms(POLL_INTERVAL_MS);
 
-        remove(CMD_READY_FLAG); // consume the flag
-        write_log("Received motor command from B.");
+        remove(CMD_READY_FLAG);
 
-        // --- Read command file ---
         FILE *fp = fopen(CMD_FILE, "r");
         if (!fp) { write_log("ERROR: Could not open motor_cmd.txt"); continue; }
-        while (fgets(buf, sizeof(buf), fp)) {} // simulate reading command
+
+        int command_id = 0;
+        fgets(buf, sizeof(buf), fp); // first line
+        sscanf(buf, "command_id: %d", &command_id);
         fclose(fp);
 
         sleep_ms(500); // simulate motor execution
 
-        // --- Send ACK back to Process B ---
-        write_log("Motor command executed.");
-        create_file(CMD_ACK_FLAG); // notify B
+        create_file(CMD_ACK_FLAG); // send ACK to B
 
-        sleep_ms(100); // small delay
+        printf("[Motor_Ctrl] Executed command_id %d successfully.\n", command_id);
+        write_log("Command executed successfully.");
+
+        sleep_ms(100);
     }
 
     return 0;
