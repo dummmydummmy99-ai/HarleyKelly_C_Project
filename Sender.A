@@ -3,7 +3,7 @@
 * Filename              :   sensor_lidar.c
 * Author                :   Harley Kelly
 * Origin Date           :   14/11/2025
-* Version               :   1.0.4
+* Version               :   1.0.3
 * Compiler              :   Microchip C30 v3.30c
 * Target                :   Cross-Platform
 * Notes                 :   Generates LIDAR data and sends it to Process B
@@ -18,91 +18,116 @@
 #define sleep_ms(ms) Sleep(ms)
 #else
 #include <unistd.h>
-#define sleep_ms(ms) usleep(ms * 1000)
+#define sleep_ms(ms) usleep(ms*1000)
 #endif
 
-#define DATA_FILE       "lidar_data.txt"
-#define READY_FLAG      "data_ready.flag"
-#define ACK_FLAG        "ack.flag"
+#define DATA_FILE "lidar_data.txt"
+#define READY_FLAG "data_ready.flag"
+#define ACK_FLAG "ack_from_B.flag"
+#define SYSTEM_LOG "system_log.txt"
+#define LOG_LOCK "log.lock"
 
-#define SYSTEM_LOG      "system_log.txt"
-#define LOG_LOCK        "log.lock"
-
-#define POLL_INTERVAL_MS 100
-
-static int file_exists(const char *filename)
-{
+//---------------------------------------
+// File existence check
+//---------------------------------------
+int file_exists(const char *filename) {
     FILE *f = fopen(filename, "r");
-    if (f) { fclose(f); return 1; }
+    if(f) { fclose(f); return 1; }
     return 0;
 }
 
-static void create_file(const char *filename)
-{
-    FILE *f = fopen(filename, "w");
-    if (f) fclose(f);
+//---------------------------------------
+// Create empty file
+//---------------------------------------
+void create_file(const char *filename) {
+    FILE *f = fopen(filename,"w");
+    if(f) fclose(f);
+    else fprintf(stderr,"Error creating file %s\n",filename);
 }
 
-static void acquire_log_lock(void)
-{
-    while (file_exists(LOG_LOCK))
-        sleep_ms(10);
+//---------------------------------------
+// Mutex functions for system_log.txt
+//---------------------------------------
+static void acquire_log_lock(void) {
+    while(file_exists(LOG_LOCK)) sleep_ms(10);
     create_file(LOG_LOCK);
 }
 
-static void release_log_lock(void)
-{
+static void release_log_lock(void) {
     remove(LOG_LOCK);
 }
 
-static void write_log(const char *message)
-{
+static void write_log(const char *msg) {
     acquire_log_lock();
-    FILE *log = fopen(SYSTEM_LOG, "a");
-    if (log) {
-        fprintf(log, "[Sensor_LIDAR] %s\n", message);
-        fclose(log);
+    FILE *log = fopen(SYSTEM_LOG,"a");
+    if(log) { 
+        fprintf(log,"[Sensor_LIDAR] %s\n",msg); 
+        fclose(log); 
     }
     release_log_lock();
 }
 
-int main()
-{
+//---------------------------------------
+// Main function
+//---------------------------------------
+int main() {
     int data_counter = 0;
     srand(time(NULL));
+
+    printf("Process A (Sensor_LIDAR) started.\n");
+    write_log("Process started.");
 
     remove(READY_FLAG);
     remove(ACK_FLAG);
 
-    write_log("Process started.");
-
-    while (1)
-    {
+    while(1) {
         data_counter++;
+        int verifier = data_counter * 13 % 1000;
 
-        FILE *fp = fopen(DATA_FILE, "w");
-        if (!fp) return 1;
+        //---------------------------------------
+        // Generate random LIDAR data
+        //---------------------------------------
+        double angle_min = -2.0 + (double)rand()/RAND_MAX;
+        double angle_max = 1.0 + (double)rand()/RAND_MAX;
+        double range_0 = 5.0 + (double)rand()/RAND_MAX*10.0;
+        double range_1 = 5.0 + (double)rand()/RAND_MAX*10.0;
+        double range_2 = 5.0 + (double)rand()/RAND_MAX*10.0;
 
-        // generate dummy LIDAR data
-        fprintf(fp, "packet_id: %d\n", data_counter);
-        fprintf(fp, "range_0: %.2f\n", 5.0 + rand()%10);
-        fprintf(fp, "range_1: %.2f\n", 5.0 + rand()%10);
-        fprintf(fp, "range_2: %.2f\n", 5.0 + rand()%10);
-        fclose(fp);
+        //---------------------------------------
+        // Write LIDAR data to file (one field per line for clarity)
+        //---------------------------------------
+        FILE *f = fopen(DATA_FILE,"w");
+        if(!f) {
+            fprintf(stderr,"Error opening %s\n",DATA_FILE);
+            return 1;
+        }
 
+        // Each line contains a specific piece of LIDAR data
+        fprintf(f, "packet_id: %d\n", data_counter);          // Unique ID for this data packet
+        fprintf(f, "verifier_code: %d\n", verifier);         // Simple checksum/verifier code
+        fprintf(f, "angle_min: %.2f\n", angle_min);          // Minimum angle of LIDAR scan
+        fprintf(f, "angle_max: %.2f\n", angle_max);          // Maximum angle of LIDAR scan
+        fprintf(f, "range_0: %.2f\n", range_0);              // Distance reading 0
+        fprintf(f, "range_1: %.2f\n", range_1);              // Distance reading 1
+        fprintf(f, "range_2: %.2f\n", range_2);              // Distance reading 2
+
+        fclose(f); // Close the file after writing
+
+        //---------------------------------------
+        // Signal Process B that new data is ready
+        //---------------------------------------
         create_file(READY_FLAG);
-
         printf("[Sensor_LIDAR] Data packet %d written successfully.\n", data_counter);
         write_log("Data packet written successfully.");
 
-        // Wait for ACK from B
-        while (!file_exists(ACK_FLAG))
-            sleep_ms(POLL_INTERVAL_MS);
-
-        remove(ACK_FLAG); // consume ACK
+        //---------------------------------------
+        // Wait for ACK from Process B
+        //---------------------------------------
+        while(!file_exists(ACK_FLAG)) sleep_ms(100);
+        remove(ACK_FLAG);
         write_log("ACK received from Process B.");
 
-        sleep_ms(1000);
+        sleep_ms(1000); // 1Hz sensor rate
     }
 
     return 0;
