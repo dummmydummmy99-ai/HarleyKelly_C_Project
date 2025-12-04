@@ -28,17 +28,24 @@
 #define sleep_ms(ms) usleep(ms * 1000)
 #endif
 
-#define DATA_FILE       "lidar_data.txt"
-#define READY_FLAG      "data_ready.flag"
-#define ACK_FLAG        "ack.flag"
-#define CMD_FILE        "motor_cmd.txt"
-#define CMD_READY_FLAG  "cmd_ready.flag"
-#define CMD_ACK_FLAG    "cmd_ack.flag"
+// --- File names for communication ---
+#define DATA_FILE       "lidar_data.txt"   // LIDAR data from A
+#define READY_FLAG      "data_ready.flag"  // indicates new data from A
+#define ACK_FLAG        "ack.flag"         // ACK to A
 
+#define CMD_FILE        "motor_cmd.txt"    // commands to C
+#define CMD_READY_FLAG  "cmd_ready.flag"   // signals C that command is ready
+#define CMD_ACK_FLAG    "cmd_ack.flag"     // acknowledgment from C
+
+// --- Shared log files ---
 #define SYSTEM_LOG      "system_log.txt"
 #define LOG_LOCK        "log.lock"
 
-#define POLL_INTERVAL_MS 100
+#define POLL_INTERVAL_MS 100  // polling interval for flags
+
+// --------------------------
+// Helper functions
+// --------------------------
 
 static int file_exists(const char *filename)
 {
@@ -83,6 +90,7 @@ int main()
 
     while (1)
     {
+        // --- Wait for new LIDAR data from Process A ---
         while (!file_exists(READY_FLAG))
             sleep_ms(POLL_INTERVAL_MS);
 
@@ -91,12 +99,14 @@ int main()
 
         FILE *fp = fopen(DATA_FILE, "r");
         if (!fp) { write_log("ERROR: Cannot open LIDAR file."); continue; }
-        while (fgets(buffer, sizeof(buffer), fp)) {}
+        while (fgets(buffer, sizeof(buffer), fp)) {} // simulate reading data
         fclose(fp);
 
+        // --- Send ACK back to Process A ---
         create_file(ACK_FLAG);
         write_log("Sent ACK to A.");
 
+        // --- Generate motor command for Process C ---
         FILE *cmd = fopen(CMD_FILE, "w");
         if (!cmd) continue;
         fprintf(cmd, "drive_speed: %.2f\n", 1.0);
@@ -104,15 +114,16 @@ int main()
         fclose(cmd);
 
         write_log("Motor command generated.");
-        create_file(CMD_READY_FLAG);
+        create_file(CMD_READY_FLAG); // signal C
 
+        // --- Wait for ACK from Process C ---
         while (!file_exists(CMD_ACK_FLAG))
             sleep_ms(POLL_INTERVAL_MS);
 
         write_log("Received ACK from C.");
         remove(CMD_ACK_FLAG);
 
-        sleep_ms(200);
+        sleep_ms(200); // small processing delay
     }
 
     return 0;
