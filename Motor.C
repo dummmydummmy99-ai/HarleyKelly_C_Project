@@ -28,14 +28,20 @@
 #define sleep_ms(ms) usleep(ms * 1000)
 #endif
 
-#define CMD_FILE        "motor_cmd.txt"
-#define CMD_READY_FLAG  "cmd_ready.flag"
-#define CMD_ACK_FLAG    "cmd_ack.flag"
+// --- File names for communication ---
+#define CMD_FILE        "motor_cmd.txt"     // command file from B
+#define CMD_READY_FLAG  "cmd_ready.flag"    // indicates new command from B
+#define CMD_ACK_FLAG    "cmd_ack.flag"      // acknowledgment to B
 
+// --- Shared log files ---
 #define SYSTEM_LOG      "system_log.txt"
 #define LOG_LOCK        "log.lock"
 
 #define POLL_INTERVAL_MS 100
+
+// --------------------------
+// Helper functions
+// --------------------------
 
 static int file_exists(const char *filename)
 {
@@ -80,23 +86,26 @@ int main()
 
     while (1)
     {
+        // --- Wait for command from Process B ---
         while (!file_exists(CMD_READY_FLAG))
             sleep_ms(POLL_INTERVAL_MS);
 
-        remove(CMD_READY_FLAG);
+        remove(CMD_READY_FLAG); // consume the flag
         write_log("Received motor command from B.");
 
+        // --- Read command file ---
         FILE *fp = fopen(CMD_FILE, "r");
         if (!fp) { write_log("ERROR: Could not open motor_cmd.txt"); continue; }
-        while (fgets(buf, sizeof(buf), fp)) {}
+        while (fgets(buf, sizeof(buf), fp)) {} // simulate reading command
         fclose(fp);
 
-        sleep_ms(500);
+        sleep_ms(500); // simulate motor execution
 
+        // --- Send ACK back to Process B ---
         write_log("Motor command executed.");
-        create_file(CMD_ACK_FLAG);
+        create_file(CMD_ACK_FLAG); // notify B
 
-        sleep_ms(100);
+        sleep_ms(100); // small delay
     }
 
     return 0;
